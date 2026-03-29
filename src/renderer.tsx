@@ -1,3 +1,5 @@
+/** @jsxImportSource hono/jsx */ //　マジックコメントでHonoのjsxを使用できるようにする
+
 import { jsxRenderer } from 'hono/jsx-renderer'
 import { Link, ViteClient } from 'vite-ssr-components/hono'
 
@@ -13,6 +15,9 @@ export const renderer = jsxRenderer(({ children, title }: { children?: any, titl
         <script src="https://cdn.tailwindcss.com"></script>
         
         <ViteClient />
+        {/* client.tsx 呼ぶ　*/}
+        <script type="module" src="/src/client.tsx"></script>
+
         <Link href="/src/style.css" rel="stylesheet" />
       </head>
       <body className="bg-gray-100">
