@@ -1,8 +1,22 @@
 /** @jsxImportSource react */
-import { useState, useCallback, useEffect } from 'react';
-import { DndContext, type DragEndEvent, type DragStartEvent } from '@dnd-kit/core';
+import { useState, useCallback, useEffect, useMemo } from 'react';
+import {
+  DndContext,
+  DragOverlay,
+  closestCorners,
+  pointerWithin,
+  type DragEndEvent,
+  type DragStartEvent,
+  type DragOverEvent,
+  type UniqueIdentifier,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  verticalListSortingStrategy,
+  arrayMove,
+} from '@dnd-kit/sortable';
 import { useDroppable } from '@dnd-kit/core';
-import { TaskItem } from './TaskItem';
+import { TaskItem, TaskItemOverlay } from './TaskItem';
 
 // --- 型定義 ---
 interface Task {
@@ -18,6 +32,8 @@ const QUADRANTS = [
   { id: 'q2', label: '第2領域：緊急でないが重要', activeBg: 'bg-orange-100', activeBorder: 'border-orange-400', defaultBg: 'bg-orange-50', defaultBorder: 'border-orange-200', textColor: 'text-orange-700', hoverRing: 'ring-orange-400' },
   { id: 'q4', label: '第4領域：緊急でなく重要でない', activeBg: 'bg-gray-200', activeBorder: 'border-gray-400', defaultBg: 'bg-gray-100', defaultBorder: 'border-gray-300', textColor: 'text-gray-700', hoverRing: 'ring-gray-400' },
 ];
+
+const QUADRANT_IDS = QUADRANTS.map((q) => q.id);
 
 // --- ID生成 ---
 let idCounter = 0;
@@ -48,6 +64,17 @@ const saveTasks = (tasks: Task[]) => {
   }
 };
 
+// --- タスクIDからquadrantを検索するヘルパー ---
+const findQuadrant = (tasks: Task[], taskId: UniqueIdentifier): string | undefined => {
+  const task = tasks.find((t) => t.id === taskId);
+  return task?.quadrant;
+};
+
+// --- あるquadrantのタスクをフィルタ・順序付きで取得 ---
+const getTasksForQuadrant = (tasks: Task[], quadrantId: string): Task[] => {
+  return tasks.filter((t) => t.quadrant === quadrantId);
+};
+
 // --- Droppable領域コンポーネント ---
 function QuadrantZone({
   quadrant,
@@ -68,6 +95,7 @@ function QuadrantZone({
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: quadrant.id });
 
+  const taskIds = useMemo(() => tasks.map((t) => t.id), [tasks]);
   const hasTasks = tasks.length > 0;
   const bgClass = hasTasks || isOver ? quadrant.activeBg : quadrant.defaultBg;
   const borderClass = isOver ? quadrant.activeBorder : quadrant.defaultBorder;
@@ -76,7 +104,7 @@ function QuadrantZone({
     <div
       ref={setNodeRef}
       className={`h-full border-2 p-3 rounded-xl transition-all flex flex-col ${bgClass} ${borderClass} ${isPlacingMode ? `cursor-pointer ring-2 ${quadrant.hoverRing} ring-opacity-60 animate-pulse` : ''
-        } ${isOver ? 'ring-2 ring-indigo-400 scale-[1.01]' : ''}`}
+        } ${isOver && isDraggingActive ? 'ring-2 ring-indigo-400 scale-[1.01]' : ''}`}
       onClick={() => {
         if (isPlacingMode) {
           onQuadrantClick(quadrant.id);
@@ -95,18 +123,20 @@ function QuadrantZone({
       )}
 
       <div className={`flex-1 space-y-0.5 pr-1 custom-scrollbar ${isDraggingActive ? 'overflow-visible' : 'overflow-y-auto'}`}>
-        {tasks.map((task) => (
-          <TaskItem
-            key={task.id}
-            id={task.id}
-            text={task.text}
-            onDelete={onDelete}
-            onTextChange={onTextChange}
-          />
-        ))}
+        <SortableContext items={taskIds} strategy={verticalListSortingStrategy}>
+          {tasks.map((task) => (
+            <TaskItem
+              key={task.id}
+              id={task.id}
+              text={task.text}
+              onDelete={onDelete}
+              onTextChange={onTextChange}
+            />
+          ))}
+        </SortableContext>
 
-        {/* ドラッグオーバー時の「ここにドロップ」表示（タスク末尾） */}
-        {isOver && isDraggingActive && (
+        {/* ドラッグオーバー時の「ここにドロップ」表示（タスクが無い場合のみ） */}
+        {isOver && isDraggingActive && tasks.length === 0 && (
           <div className="flex items-center justify-center py-3 mt-1 rounded-lg border-2 border-dashed border-indigo-400 bg-indigo-50 animate-fadeIn">
             <span className="text-indigo-600 font-bold text-sm">ここにドロップ</span>
           </div>
@@ -115,6 +145,15 @@ function QuadrantZone({
     </div>
   );
 }
+
+// --- カスタム衝突検出: pointerWithinをベースに、closestCornersにフォールバック ---
+const customCollisionDetection = (args: Parameters<typeof pointerWithin>[0]) => {
+  const pointerCollisions = pointerWithin(args);
+  if (pointerCollisions.length > 0) {
+    return pointerCollisions;
+  }
+  return closestCorners(args);
+};
 
 // --- メインApp ---
 export const App = () => {
@@ -125,13 +164,19 @@ export const App = () => {
     saveTasks(tasks);
   }, [tasks]);
 
-  // ドラッグ中かどうか
-  const [isDraggingActive, setIsDraggingActive] = useState(false);
+  // ドラッグ中のアイテムID
+  const [activeId, setActiveId] = useState<UniqueIdentifier | null>(null);
 
   // 新規作成モード
   const [isCreating, setIsCreating] = useState(false);
   const [newText, setNewText] = useState('');
   const [isPlacingMode, setIsPlacingMode] = useState(false);
+
+  // ドラッグ中かどうか
+  const isDraggingActive = activeId !== null;
+
+  // ドラッグ中のアイテムテキスト
+  const activeTask = activeId ? tasks.find((t) => t.id === activeId) : null;
 
   // タスク削除
   const handleDelete = useCallback((id: string) => {
@@ -146,21 +191,90 @@ export const App = () => {
   }, []);
 
   // ドラッグ開始
-  const handleDragStart = (_event: DragStartEvent) => {
-    setIsDraggingActive(true);
+  const handleDragStart = (event: DragStartEvent) => {
+    setActiveId(event.active.id);
   };
 
-  // ドラッグ終了 → 領域間移動
-  const handleDragEnd = (event: DragEndEvent) => {
-    setIsDraggingActive(false);
+  // ドラッグオーバー → 別の領域に入った時にリアルタイムで移動
+  const handleDragOver = (event: DragOverEvent) => {
     const { active, over } = event;
-    if (over) {
-      const quadrantId = over.id as string;
-      setTasks((prev) =>
-        prev.map((t) =>
-          t.id === active.id ? { ...t, quadrant: quadrantId } : t
-        )
-      );
+    if (!over) return;
+
+    const activeTaskId = active.id as string;
+    const overId = over.id as string;
+
+    // activeのquadrantを探す
+    const activeQuadrant = findQuadrant(tasks, activeTaskId);
+    if (!activeQuadrant) return;
+
+    // overがquadrant自体の場合
+    if (QUADRANT_IDS.includes(overId)) {
+      if (activeQuadrant !== overId) {
+        setTasks((prev) => {
+          const updated = prev.filter((t) => t.id !== activeTaskId);
+          const activeItem = prev.find((t) => t.id === activeTaskId);
+          if (!activeItem) return prev;
+          // 移動先の末尾に追加
+          return [...updated, { ...activeItem, quadrant: overId }];
+        });
+      }
+      return;
+    }
+
+    // overがタスクの場合
+    const overQuadrant = findQuadrant(tasks, overId);
+    if (!overQuadrant) return;
+
+    if (activeQuadrant !== overQuadrant) {
+      // 異なる領域間の移動
+      setTasks((prev) => {
+        const updated = prev.filter((t) => t.id !== activeTaskId);
+        const activeItem = prev.find((t) => t.id === activeTaskId);
+        if (!activeItem) return prev;
+
+        // overアイテムの位置を見つけて、その直前に挿入
+        const overIndex = updated.findIndex((t) => t.id === overId);
+        const movedItem = { ...activeItem, quadrant: overQuadrant };
+
+        const result = [...updated];
+        result.splice(overIndex, 0, movedItem);
+        return result;
+      });
+    }
+  };
+
+  // ドラッグ終了 → 同一領域内の並び替え確定
+  const handleDragEnd = (event: DragEndEvent) => {
+    setActiveId(null);
+    const { active, over } = event;
+    if (!over) return;
+
+    const activeTaskId = active.id as string;
+    const overId = over.id as string;
+
+    // overがquadrant自体ならquadrant変更のみ（既にhandleDragOverで処理済み）
+    if (QUADRANT_IDS.includes(overId)) {
+      return;
+    }
+
+    // 同一領域内の並び替え
+    const activeQuadrant = findQuadrant(tasks, activeTaskId);
+    const overQuadrant = findQuadrant(tasks, overId);
+
+    if (activeQuadrant && overQuadrant && activeQuadrant === overQuadrant) {
+      setTasks((prev) => {
+        const quadrantTasks = prev.filter((t) => t.quadrant === activeQuadrant);
+        const otherTasks = prev.filter((t) => t.quadrant !== activeQuadrant);
+
+        const oldIndex = quadrantTasks.findIndex((t) => t.id === activeTaskId);
+        const newIndex = quadrantTasks.findIndex((t) => t.id === overId);
+
+        if (oldIndex !== -1 && newIndex !== -1 && oldIndex !== newIndex) {
+          const reordered = arrayMove(quadrantTasks, oldIndex, newIndex);
+          return [...otherTasks, ...reordered];
+        }
+        return prev;
+      });
     }
   };
 
@@ -194,8 +308,22 @@ export const App = () => {
     setNewText('');
   };
 
+  // 各quadrantのタスクをメモ化
+  const quadrantTasksMap = useMemo(() => {
+    const map: Record<string, Task[]> = {};
+    for (const q of QUADRANTS) {
+      map[q.id] = getTasksForQuadrant(tasks, q.id);
+    }
+    return map;
+  }, [tasks]);
+
   return (
-    <DndContext onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+    <DndContext
+      collisionDetection={customCollisionDetection}
+      onDragStart={handleDragStart}
+      onDragOver={handleDragOver}
+      onDragEnd={handleDragEnd}
+    >
       <div className="h-screen w-screen bg-gradient-to-br from-slate-50 to-indigo-50 flex flex-col p-4 overflow-hidden">
         {/* ヘッダー */}
         <div className="flex items-center mb-4 flex-shrink-0">
@@ -275,7 +403,7 @@ export const App = () => {
             <QuadrantZone
               key={q.id}
               quadrant={q}
-              tasks={tasks.filter((t) => t.quadrant === q.id)}
+              tasks={quadrantTasksMap[q.id]}
               onDelete={handleDelete}
               onTextChange={handleTextChange}
               isPlacingMode={isPlacingMode}
@@ -285,6 +413,11 @@ export const App = () => {
           ))}
         </div>
       </div>
+
+      {/* ドラッグオーバーレイ */}
+      <DragOverlay dropAnimation={null}>
+        {activeTask ? <TaskItemOverlay text={activeTask.text} /> : null}
+      </DragOverlay>
     </DndContext>
   );
 };

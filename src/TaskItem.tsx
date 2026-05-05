@@ -1,6 +1,7 @@
 /** @jsxImportSource react */
 import { useState } from 'react';
-import { useDraggable } from '@dnd-kit/core';
+import { useSortable } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 
 interface TaskItemProps {
   id: string;
@@ -13,29 +14,45 @@ export function TaskItem({ id, text, onDelete, onTextChange }: TaskItemProps) {
   const [isHovered, setIsHovered] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
 
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({
     id: id,
+    disabled: isEditing,
   });
 
   const style: React.CSSProperties = {
-    transform: transform ? `translate3d(${transform.x}px, ${transform.y}px, 0)` : undefined,
+    transform: CSS.Transform.toString(transform),
+    transition,
     zIndex: isDragging ? 9999 : 'auto',
-    opacity: isDragging ? 0.85 : 1,
+    opacity: isDragging ? 0.4 : 1,
     position: 'relative',
-    boxShadow: isDragging ? '0 8px 25px rgba(79, 70, 229, 0.35)' : undefined,
-    border: isDragging ? '2px solid #6366f1' : undefined,
   };
 
   return (
     <div
       ref={setNodeRef}
       style={style}
-      className="group relative flex items-center bg-white border border-gray-200 rounded-lg shadow-sm px-3 py-2 mb-1.5 cursor-grab active:cursor-grabbing touch-none transition-all hover:shadow-md hover:border-indigo-300"
+      className={`group relative flex items-center bg-white border rounded-lg shadow-sm px-3 py-2 mb-1.5 touch-none transition-all hover:shadow-md ${
+        isDragging
+          ? 'border-indigo-400 shadow-lg scale-[1.02]'
+          : 'border-gray-200 hover:border-indigo-300 cursor-grab active:cursor-grabbing'
+      }`}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
-      {...listeners}
       {...attributes}
+      {...listeners}
     >
+      {/* ドラッグハンドルアイコン */}
+      <span className="mr-2 text-gray-300 group-hover:text-gray-500 transition-colors flex-shrink-0 select-none cursor-grab" aria-hidden="true">
+        ⠿
+      </span>
+
       {/* テキスト表示・編集エリア */}
       {isEditing ? (
         <input
@@ -81,6 +98,20 @@ export function TaskItem({ id, text, onDelete, onTextChange }: TaskItemProps) {
           ✕
         </button>
       )}
+    </div>
+  );
+}
+
+/** ドラッグオーバーレイ用の表示専用コンポーネント */
+export function TaskItemOverlay({ text }: { text: string }) {
+  return (
+    <div className="flex items-center bg-white border-2 border-indigo-400 rounded-lg shadow-2xl px-3 py-2 cursor-grabbing opacity-95 max-w-[300px]">
+      <span className="mr-2 text-indigo-400 flex-shrink-0 select-none" aria-hidden="true">
+        ⠿
+      </span>
+      <span className="flex-1 text-sm text-gray-700 truncate select-none font-medium">
+        {text}
+      </span>
     </div>
   );
 }
